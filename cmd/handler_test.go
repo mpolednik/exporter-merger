@@ -89,7 +89,7 @@ func TestHandler(t *testing.T) {
 	barWanted := 4.0
 	var bar float64
 
-	var conflictWanted sort.Float64Slice = []float64{2.0, 5.0}
+	var conflictWanted sort.Float64Slice = []float64{7.0}
 	var conflict sort.Float64Slice = make([]float64, 0)
 
 	sharedWanted := map[string]float64{"a": 3.0, "b": 6.0}

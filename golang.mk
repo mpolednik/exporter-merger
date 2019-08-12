@@ -67,7 +67,7 @@ xc:
 	GOOS=linux GOARCH=amd64 make build
 	GOOS=darwin GOARCH=amd64 make build
 
-install: test
+install: vendor test
 	go install \
 		$(BUILD_FLAGS)
 

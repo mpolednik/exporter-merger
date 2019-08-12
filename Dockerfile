@@ -1,4 +1,4 @@
-FROM golang:1.9-alpine AS build-env
+FROM golang:1.12.7-alpine AS build-env
 
 RUN apk add --no-cache git make
 
