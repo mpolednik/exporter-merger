@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,39 @@ func (h Handler) Merge(w io.Writer) {
 		}
 	}
 
+	// Logic to merge metrics based on labels and types.
+	for _, mf := range mfs {
+		// Go through metrics of a metric family and merge the metrics in separate map.
+		mergedMetricsTmp := map[string]*prom.Metric{}
+		for _, metric := range mf.GetMetric() {
+			var labels strings.Builder
+
+			// Construct label identifier - merge together label strings forming a unique "bucket".
+			for _, label := range metric.GetLabel() {
+				labels.WriteString(label.String())
+			}
+			key := labels.String()
+
+			_, ok := mergedMetricsTmp[key]
+			if !ok {
+				// Simple case: metric doesn't exist yet, create it.
+				mergedMetricsTmp[key] = metric
+			} else {
+				// Hard case: if the key already exists, update it.
+				mergeMetricValues(mergedMetricsTmp[key], *metric)
+			}
+		}
+
+		// Transform the separate map to a list compatible with original format.
+		mergedMetrics := []*prom.Metric{}
+		for _, metric := range mergedMetricsTmp {
+			mergedMetrics = append(mergedMetrics, metric)
+		}
+
+		// Replace the original metrics with merged metrics.
+		mf.Metric = mergedMetrics
+	}
+
 	names := []string{}
 	for n := range mfs {
 		names = append(names, n)
@@ -84,5 +118,31 @@ func (h Handler) Merge(w io.Writer) {
 			log.Error(err)
 			return
 		}
+	}
+}
+
+func mergeMetricValues(dst *prom.Metric, src prom.Metric) {
+	if dst.GetGauge() != nil && src.GetGauge() != nil {
+		*(dst.GetGauge().Value) += src.GetGauge().GetValue()
+	}
+	if dst.GetCounter() != nil && src.GetCounter() != nil {
+		*(dst.GetCounter().Value) += src.GetCounter().GetValue()
+	}
+	if dst.GetHistogram() != nil && src.GetHistogram() != nil {
+		dstBuckets := dst.GetHistogram().GetBucket()
+		srcBuckets := src.GetHistogram().GetBucket()
+		for i := range dstBuckets {
+			*(dstBuckets[i].CumulativeCount) += srcBuckets[i].GetCumulativeCount()
+		}
+		*(dst.GetHistogram().SampleCount) += src.GetHistogram().GetSampleCount()
+		*(dst.GetHistogram().SampleSum) += src.GetHistogram().GetSampleSum()
+	}
+	// Summary merging is probably not done properly yet: we're not merging quantiles!
+	if dst.GetSummary() != nil && src.GetSummary() != nil {
+		*(dst.GetSummary().SampleCount) += src.GetSummary().GetSampleCount()
+		*(dst.GetSummary().SampleSum) += src.GetSummary().GetSampleSum()
+	}
+	if dst.GetUntyped() != nil && src.GetUntyped() != nil {
+		*(dst.GetUntyped().Value) += src.GetUntyped().GetValue()
 	}
 }
