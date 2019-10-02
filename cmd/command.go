@@ -80,15 +80,28 @@ func (app *App) Bind(cmd *cobra.Command) {
 
 	cmd.PersistentFlags().StringSlice(
 		"url", nil,
-		"URL to scrape. Can be speficied multiple times. (ENV:MERGER_URLS,space-seperated)")
+		"URL to scrape. Can be speficied multiple times. If specified, overrides label matching. (ENV:MERGER_URLS,space-seperated)")
 	app.viper.BindPFlag("urls", cmd.PersistentFlags().Lookup("url"))
+
+	cmd.PersistentFlags().String(
+		"label", "",
+		"Label to match `labels` against")
+
+	cmd.PersistentFlags().StringSlice(
+		"label_config", nil,
+		"Tuples of port:path:label to scrape. (ENV:MERGER_LABELS,space-seperated)")
+	app.viper.BindPFlag("label_config", cmd.PersistentFlags().Lookup("label_config"))
 }
 
 func (app *App) run(cmd *cobra.Command, args []string) {
-	http.Handle("/metrics", Handler{
-		Exporters:            app.viper.GetStringSlice("urls"),
-		ExportersHTTPTimeout: app.viper.GetInt("exporterstimeout"),
-	})
+	handler := NewHandler(
+		app.viper.GetInt("exporterstimeout"),
+		app.viper.GetStringSlice("urls"),
+		app.viper.GetString("label"),
+		app.viper.GetStringSlice("label_config"),
+	)
+
+	http.Handle("/metrics", handler)
 
 	port := app.viper.GetInt("port")
 	log.Infof("starting HTTP server on port %d", port)

@@ -15,6 +15,25 @@ Merges Prometheus metrics from multiple sources.
 
 ## Usage
 
+### Dynamic Endpoint Discovery
+
+When configured, exporter-merger attempts to discover containers through Docker SDK. When running in container,
+`/var/run/docker.sock` must be mounted to corresponding directory. The configuration is as follows (docker-compose):
+
+```yaml
+environment:
+- MERGER_LABEL=traefik.frontend.rule
+- MERGER_LABEL_CONFIG=/metrics:8080:Host:my-container /metrics:8080:Host:my-container2
+```
+
+This examples combines Traefik container discovery with automatic metric
+merging. Dynamic endpoint discovery can only be enabled through command line args or environment variables.
+
+It is important to note that dynamic discovery may lead to metrics artifacts - as containers die, counts
+will lose continuity.
+
+### Static Endpoint Discovery
+
 *exporter-merger* needs a configuration file. Currently, nothing but URLs are accepted:
 
 ```yaml
@@ -29,13 +48,17 @@ To start the exporter:
 exporter-merger --config-path merger.yaml --listen-port 8080
 ```
 
+> Static discovery disables dynamic discovery.
+
 ### Environment variables
 
 Alternatively configuration can be passed via environment variables, here is relevant part of `exporter-merger -h` output:
+
 ```
       --listen-port int      Listen port for the HTTP server. (ENV:MERGER_PORT) (default 8080)
       --url stringSlice      URL to scrape. Can be speficied multiple times. (ENV:MERGER_URLS,space-seperated)
-
+      --label labels            Label to match labels against
+      --label-map stringSlice   Tuples of port:path:label to scrape. (ENV:MERGER_LABELS,space-seperated)
 ```
 
 ## Kubernetes

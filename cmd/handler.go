@@ -1,21 +1,62 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types"
+	docker "github.com/docker/docker/client"
 	prom "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 	log "github.com/sirupsen/logrus"
 )
 
 type Handler struct {
-	Exporters            []string
-	ExportersHTTPTimeout int
+	exporters    []string
+	labelConfigs []labelConfiguration
+	label        string
+	httpTimeout  int
+}
+
+type labelConfiguration struct {
+	label string
+	port  int
+	path  string
+}
+
+func parseLabelConfiguration(labels []string) []labelConfiguration {
+	lcs := make([]labelConfiguration, 0)
+
+	for _, labelConfig := range labels {
+		parts := strings.SplitN(labelConfig, ":", 3)
+		port, err := strconv.Atoi(parts[1])
+		if err != nil {
+			panic("Invalid port! Port should be value in range 1-65535")
+		}
+		lcs = append(lcs, labelConfiguration{
+			path:  parts[0],
+			port:  port,
+			label: parts[2],
+		})
+	}
+
+	return lcs
+}
+
+func NewHandler(httpTimeout int, exporters []string, label string, labelConfigs []string) Handler {
+	return Handler{
+		httpTimeout:  httpTimeout,
+		exporters:    exporters,
+		labelConfigs: parseLabelConfiguration(labelConfigs),
+		label:        label,
+	}
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -31,10 +72,10 @@ func (h Handler) Merge(w io.Writer) {
 
 	responses := make([]map[string]*prom.MetricFamily, 1024)
 	responsesMu := sync.Mutex{}
-	httpClientTimeout := time.Second * time.Duration(h.ExportersHTTPTimeout)
+	httpClientTimeout := time.Second * time.Duration(h.httpTimeout)
 
 	wg := sync.WaitGroup{}
-	for _, url := range h.Exporters {
+	for _, url := range h.exporterUrls() {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
@@ -119,6 +160,67 @@ func (h Handler) Merge(w io.Writer) {
 			return
 		}
 	}
+}
+
+func (h Handler) exporterUrls() []string {
+	if len(h.exporters) > 0 {
+		log.Infof("Exporters specified as URLs, using static configuration")
+		return h.exporters
+	}
+
+	log.Infof("Using dynamic URL discovery")
+	return h.urlsFromLabelConfigs()
+}
+
+func (h Handler) urlsFromLabelConfigs() []string {
+	cli, err := docker.NewClientWithOpts(docker.WithVersion("1.38"))
+	if err != nil {
+		panic(err)
+	}
+
+	log.Debug("listing all containers")
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{})
+	if err != nil {
+		panic(err)
+	}
+	log.WithField("n", len(containers)).Infof("discovered n containers")
+
+	urls := make([]string, 0)
+	var labelMatch *labelConfiguration
+
+	// Iterate over *all* running containers.
+	for _, container := range containers {
+
+		// First filter: expected label must be present.
+		labelMatch = nil
+		labelValue, ok := container.Labels[h.label]
+		if !ok {
+			continue
+		}
+
+		// Second filter: at least one labelConfiguration must match label value
+		for _, lc := range h.labelConfigs {
+			if strings.Compare(lc.label, labelValue) == 0 {
+				labelMatch = &lc
+				log.WithField("container", container.Names[0]).WithField("label", h.label).WithField("labelValue", labelValue).WithField("WantedLabelValue", lc.label).Debug("matched")
+				break
+			}
+			log.WithField("container", container.Names[0]).WithField("label", h.label).WithField("labelValue", labelValue).WithField("WantedLabelValue", lc.label).Debug("no match")
+		}
+
+		// Skip container if we haven't found matching label pair.
+		if labelMatch == nil {
+			continue
+		}
+
+		// If the container has the label, we need to fetch its' name and construct URL in the following format:
+		// http://${containerName}:${port}${path}
+		scrapedURL := fmt.Sprintf("http://%s:%d%s", container.Names[0][1:], labelMatch.port, labelMatch.path)
+		urls = append(urls, scrapedURL)
+	}
+
+	log.WithField("n", len(urls)).Infof("got n urls")
+	return urls
 }
 
 func mergeMetricValues(dst *prom.Metric, src prom.Metric) {
