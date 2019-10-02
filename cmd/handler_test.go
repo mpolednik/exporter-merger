@@ -51,9 +51,9 @@ func TestHandler(t *testing.T) {
 		te2,
 	}
 
-	server := httptest.NewServer(cmd.Handler{
-		Exporters: exporters,
-	})
+	labelConfigs := []string{}
+
+	server := httptest.NewServer(cmd.NewHandler(1, exporters, "", labelConfigs))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL)
