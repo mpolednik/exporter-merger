@@ -177,6 +177,7 @@ func (h Handler) urlsFromLabelConfigs() []string {
 	if err != nil {
 		panic(err)
 	}
+	defer cli.Close()
 
 	log.Debug("listing all containers")
 	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{})
